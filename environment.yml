@@ -1,0 +1,14 @@
+name: tactiq
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - beautifulsoup4
+      - psycopg2-binary
+      - sqlalchemy
+      - python-dotenv
+      - pandas
+      - lxml
