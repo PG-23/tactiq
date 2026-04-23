@@ -52,7 +52,7 @@ cd tactiq
 
 ```bash
 conda env create -f environment.yml
-conda activate fm-optimizer
+conda activate tactiq
 ```
 
 ### 3. Configure environment variables
