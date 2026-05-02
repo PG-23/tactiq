@@ -6,13 +6,23 @@ Runs the full Phase 1 pipeline:
   3. Load into PostgreSQL
 
 Usage:
-  python pipeline.py <path_to_fm_export.html>
+  python src/pipeline.py data/exports/brighton.html
 """
 
 import sys
 from fm_parser import parse_fm_html
 from scoring import score_all
 from database import init_db, upsert_players
+
+
+def format_value(val) -> str:
+    """Safely format a player value for display."""
+    if val is None:
+        return "N/A"
+    try:
+        return f"£{float(val):,.0f}"
+    except (ValueError, TypeError):
+        return str(val)
 
 
 def run(filepath: str):
@@ -35,7 +45,7 @@ def run(filepath: str):
     print(f"      {'Name':<22} {'Position':<8} {'Score':>6} {'Value':>12} {'Age':>4}")
     print(f"      {'-'*56}")
     for p in scored[:10]:
-        val = f"£{p.value:,.0f}" if p.value else "N/A"
+        val = format_value(p.value)
         print(f"      {p.name:<22} {p.primary_position:<8} {p.score:>6.2f} {val:>12} {str(p.age or '?'):>4}")
 
     # Merge scores back into raw player dicts for DB insertion
@@ -54,6 +64,6 @@ def run(filepath: str):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python pipeline.py <path_to_fm_export.html>")
+        print("Usage: python src/pipeline.py <path_to_fm_export.html>")
         sys.exit(1)
     run(sys.argv[1])
