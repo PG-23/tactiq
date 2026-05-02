@@ -5,7 +5,7 @@ Parses FM24 squad HTML exports into a list of player dicts.
 How to export from FM24:
   1. Go to your Squad screen
   2. Use the Views dropdown to add all desired attributes
-  3. Press Ctrl+P → 'Print to HTML' → save the file
+  3. Press Ctrl+P → 'Web Page' → save the file
 """
 
 from pathlib import Path
@@ -14,39 +14,79 @@ import re
 
 
 # ---------------------------------------------------------------------------
-# Attribute columns expected from a full FM24 squad export.
-# Adjust these if your custom view includes different columns.
+# Mapping of FM24 export column headers → internal attribute names
+# Derived from actual FM24 HTML export headers
 # ---------------------------------------------------------------------------
-ATTRIBUTE_COLUMNS = [
-    "name", "age", "nationality", "club", "position",
-    "value", "wage",
+COLUMN_MAP = {
+    # Identity
+    "name":             "name",
+    "age":              "age",
+    "nat":              "nationality",
+    "club":             "club",
+    "position":         "position",
+    "best pos":         "best_pos",
+    "transfer value":   "value",
+    "salary":           "wage",
+
     # Technical
-    "corners", "crossing", "dribbling", "finishing", "first_touch",
-    "free_kick", "heading", "long_shots", "long_throws", "marking",
-    "passing", "penalty_taking", "tackling", "technique",
+    "cor":              "corners",
+    "cro":              "crossing",
+    "dri":              "dribbling",
+    "fin":              "finishing",
+    "fir":              "first_touch",
+    "fre":              "free_kick",
+    "hea":              "heading",
+    "lon":              "long_shots",
+    "l th":             "long_throws",
+    "mar":              "marking",
+    "pas":              "passing",
+    "pen":              "penalty_taking",
+    "tck":              "tackling",
+    "tec":              "technique",
+
     # Mental
-    "aggression", "anticipation", "bravery", "composure", "concentration",
-    "decisions", "determination", "flair", "leadership", "off_the_ball",
-    "positioning", "teamwork", "vision", "work_rate",
+    "agg":              "aggression",
+    "ant":              "anticipation",
+    "bra":              "bravery",
+    "cmp":              "composure",
+    "cnt":              "concentration",
+    "dec":              "decisions",
+    "det":              "determination",
+    "fla":              "flair",
+    "ldr":              "leadership",
+    "otb":              "off_the_ball",
+    "pos":              "positioning",
+    "tea":              "teamwork",
+    "vis":              "vision",
+    "wor":              "work_rate",
+
     # Physical
-    "acceleration", "agility", "balance", "jumping_reach", "natural_fitness",
-    "pace", "stamina", "strength",
+    "acc":              "acceleration",
+    "agi":              "agility",
+    "bal":              "balance",
+    "jum":              "jumping_reach",
+    "pac":              "pace",
+    "sta":              "stamina",
+    "str":              "strength",
+
     # Goalkeeping
-    "aerial_reach", "command_of_area", "communication", "eccentricity",
-    "handling", "kicking", "one_on_ones", "reflexes", "rushing_out",
-    "tendency_to_punch", "throwing",
-]
+    "aer":              "aerial_reach",
+    "cmd":              "command_of_area",
+    "com":              "communication",
+    "ecc":              "eccentricity",
+    "han":              "handling",
+    "kic":              "kicking",
+    "1v1":              "one_on_ones",
+    "ref":              "reflexes",
+    "tro":              "rushing_out",
+    "pun":              "tendency_to_punch",
+    "thr":              "throwing",
+}
 
 
-def _clean_value(raw: str) -> str | int | float | None:
-    """Coerce a raw cell string into an appropriate Python type."""
-    val = raw.strip()
-    if not val or val == "-":
-        return None
-    # Strip currency symbols and commas from values/wages (e.g. '£1.2M', '£500p/w')
-    val = re.sub(r"[£$€,]", "", val)
-    val = re.sub(r"p/w", "", val, flags=re.IGNORECASE).strip()
-    # Convert shorthand millions/thousands
+def _parse_shorthand(val: str) -> float | None:
+    """Convert shorthand like '27M' or '550K' to a float. Returns None if not recognised."""
+    val = val.strip()
     if val.endswith("M"):
         try:
             return float(val[:-1]) * 1_000_000
@@ -57,15 +97,44 @@ def _clean_value(raw: str) -> str | int | float | None:
             return float(val[:-1]) * 1_000
         except ValueError:
             pass
-    # Try numeric
+    try:
+        return float(val)
+    except ValueError:
+        return None
+
+
+def _clean_value(raw: str) -> str | int | float | None:
+    """Coerce a raw cell string into an appropriate Python type."""
+    val = raw.strip()
+    if not val or val in ("-", "N/A", ""):
+        return None
+
+    # Strip currency symbols and commas
+    val = re.sub(r"[£$€,]", "", val).strip()
+
+    # Remove p/a or p/w wage suffixes
+    val = re.sub(r"p/[aw]", "", val, flags=re.IGNORECASE).strip()
+
+    # Handle value ranges e.g. "27M - 30M" → midpoint
+    if " - " in val:
+        parts = val.split(" - ")
+        if len(parts) == 2:
+            low = _parse_shorthand(parts[0].strip())
+            high = _parse_shorthand(parts[1].strip())
+            if low is not None and high is not None:
+                return (low + high) / 2
+
+    # Single shorthand value
+    parsed = _parse_shorthand(val)
+    if parsed is not None:
+        return parsed
+
+    # Try plain int
     try:
         return int(val)
     except ValueError:
         pass
-    try:
-        return float(val)
-    except ValueError:
-        pass
+
     return val
 
 
@@ -92,26 +161,24 @@ def parse_fm_html(filepath: str | Path) -> list[dict]:
         filepath: Path to the .html export file.
 
     Returns:
-        List of player dicts with cleaned, typed values.
+        List of player dicts with cleaned, typed values
+        using internal attribute names.
     """
     path = Path(filepath)
     if not path.exists():
         raise FileNotFoundError(f"FM export not found: {path}")
 
-    soup = BeautifulSoup(path.read_text(encoding="utf-8", errors="replace"), "html.fm_parser")
+    soup = BeautifulSoup(path.read_text(encoding="utf-8", errors="replace"), "lxml")
     table = soup.find("table")
     if table is None:
-        raise ValueError("No <table> found in export — check the file is a valid FM HTML export.")
+        raise ValueError("No <table> found in export — check the file is a valid FM24 HTML export.")
 
-    # Build column map from the header row
-    headers = []
+    # Build column index from header row using COLUMN_MAP
+    raw_headers = []
     header_row = table.find("tr")
     if header_row:
         for th in header_row.find_all(["th", "td"]):
-            raw_header = th.get_text(strip=True).lower()
-            # Normalise header to snake_case
-            normalised = re.sub(r"[^a-z0-9]+", "_", raw_header).strip("_")
-            headers.append(normalised)
+            raw_headers.append(th.get_text(strip=True).lower().strip())
 
     players = []
     rows = table.find_all("tr")[1:]  # skip header row
@@ -119,22 +186,24 @@ def parse_fm_html(filepath: str | Path) -> list[dict]:
     for row in rows:
         cells = row.find_all(["td", "th"])
         if len(cells) < 3:
-            continue  # skip empty/separator rows
+            continue
 
         raw_values = [c.get_text(strip=True) for c in cells]
         player: dict = {}
 
-        for i, header in enumerate(headers):
+        for i, raw_header in enumerate(raw_headers):
             if i >= len(raw_values):
-                player[header] = None
                 continue
-            raw = raw_values[i]
-            if header == "position" or header == "best_pos":
-                player[header] = _parse_positions(raw)
-            else:
-                player[header] = _clean_value(raw)
+            internal_name = COLUMN_MAP.get(raw_header)
+            if not internal_name:
+                continue  # ignore columns we don't need
 
-        # Skip rows that don't look like players
+            raw = raw_values[i]
+            if internal_name in ("position", "best_pos"):
+                player[internal_name] = _parse_positions(raw)
+            else:
+                player[internal_name] = _clean_value(raw)
+
         if not player.get("name"):
             continue
 
